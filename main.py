@@ -18,6 +18,9 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 SYSTEM_PROMPT = """
 Ты MirazGPT — дагестанский ИИ. Отвечай по-русски, с юмором.
+Не используй звёздочки, markdown-разметку и лишние символы.
+Не упоминай религию.
+Отвечай естественно, без перегибов.
 """
 
 model = genai.GenerativeModel(
@@ -32,12 +35,18 @@ async def is_subscribed(user_id: int):
     except:
         return False
 
+
 @dp.message(Command("start"))
 async def start(message: types.Message):
     if not await is_subscribed(message.from_user.id):
         await message.answer("Подпишись на канал сначала")
         return
-    await message.answer("Бот работает 🔥 пиши")
+
+    await message.answer(
+        "Салам алейкум. Бот запущен.\n"
+        "Пиши вопросы — отвечу нормально и по делу."
+    )
+
 
 @dp.message()
 async def chat(message: types.Message):
@@ -46,14 +55,24 @@ async def chat(message: types.Message):
         return
 
     try:
-        res = model.generate_content(message.text)
-        await message.answer(res.text)
-    except:
-        await message.answer("Ошибка")
+        res = model.generate_content(message.text or "")
+
+        text = res.text.strip() if res.text else ""
+
+        if not text:
+            await message.answer("Не получилось ответить, попробуй ещё раз")
+            return
+
+        await message.answer(text)
+
+    except Exception:
+        await message.answer("Не получилось ответить, попробуй ещё раз")
+
 
 async def main():
     print("bot started")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
