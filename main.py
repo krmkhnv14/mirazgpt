@@ -26,15 +26,13 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 model = genai.GenerativeModel(
     model_name="models/gemini-1.5-flash-latest",
-    system_instruction=(
-        "Ты умный ассистент. Отвечай кратко, без мусора."
-    )
+    system_instruction="Ты умный ассистент. Отвечай кратко и по делу."
 )
 
 # ================= TAVILY =================
 tavily = TavilyClient(api_key=TAVILY_KEY)
 
-# ================= DATABASE =================
+# ================= DB =================
 conn = sqlite3.connect("memory.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -82,12 +80,12 @@ def generate_image(prompt: str):
 async def start(message: types.Message):
     await message.answer(
         "Салам алейкум 👋\n"
-        "Я твой AI-ассистент.\n"
-        "Могу отвечать, искать в интернете и генерировать картинки."
+        "Я AI бот.\n"
+        "Могу отвечать, искать инфу и генерировать картинки."
     )
 
 
-# ================= MAIN CHAT =================
+# ================= CHAT =================
 @dp.message()
 async def chat(message: types.Message):
     user_id = str(message.from_user.id)
@@ -97,42 +95,42 @@ async def chat(message: types.Message):
     if not text:
         return
 
-    # ================= RULE 1: greeting =================
+    # greeting
     if "салам" in text:
         await message.answer("Ваалейкум ассалам")
         return
 
-    # ================= RULE 2: food question =================
+    # cultural rules
     if "чей тонкий хинкал" in text:
         await message.answer("Только лезгинский.")
         return
 
     if "дербент" in text:
         await message.answer(
-            "Дербент ничей — там живут разные народы. "
-            "Но многие считают его лезгинским по исторической культуре."
+            "Дербент — город разных народов. "
+            "Исторически там живут лезгины, азербайджанцы, табасараны и другие."
         )
         return
 
-    # ================= IMAGE =================
+    # image
     if "нарисуй" in text or "картинку" in text:
         await message.answer("Думаю над изображением...")
         img = generate_image(text_raw)
         await message.answer_photo(img)
         return
 
-    # ================= WEB SEARCH =================
+    # search
     if "найди" in text or "что такое" in text:
         await message.answer("Ищу в интернете...")
         result = search_web(text_raw)
         await message.answer(result)
         return
 
-    # ================= AI =================
+    # AI
     loading = await message.answer("Думаю...")
 
     try:
-        history = get_history(user_id, limit=5)
+        history = get_history(user_id, 5)
         context = "\n".join(history)
 
         prompt = f"{context}\nПользователь: {text_raw}"
@@ -144,11 +142,14 @@ async def chat(message: types.Message):
         await loading.edit_text(response.text)
 
     except Exception as e:
-        await loading.edit_text(f"Ошибка генерации: {e}")
+        await loading.edit_text(f"Ошибка: {e}")
 
 
-# ================= RUN =================
+# ================= MAIN =================
 async def main():
+    # 🔥 FIX TELEGRAM CONFLICT
+    await bot.delete_webhook(drop_pending_updates=True)
+
     print("Bot started")
     await dp.start_polling(bot)
 
