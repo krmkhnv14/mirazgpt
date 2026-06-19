@@ -1,34 +1,28 @@
 import asyncio
 import os
+import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from dotenv import load_dotenv
 import google.generativeai as genai
 
-# === LOAD ENV ===
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не найден в .env")
-
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY не найден в .env")
-
-# === BOT ===
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# === GEMINI ===
 genai.configure(api_key=GEMINI_API_KEY)
 
+users = {}
+
 SYSTEM_PROMPT = """
-Ты — MirazGPT, дагестанский ИИ из гор.
-Отвечай только на русском, с юмором и горским стилем.
-Используй: валлахи, кунак, братан, яман, машаллах.
+Ты — MirazGPT, полезный Telegram ассистент.
+Отвечай кратко и понятно.
+Иногда можешь писать "Салам алейкум", "брат", "машаллах", но редко.
 """
 
 model = genai.GenerativeModel(
@@ -36,7 +30,7 @@ model = genai.GenerativeModel(
     system_instruction=SYSTEM_PROMPT
 )
 
-# === CHECK SUB ===
+# === ПРОВЕРКА ПОДПИСКИ ===
 async def is_subscribed(user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
@@ -44,43 +38,59 @@ async def is_subscribed(user_id: int) -> bool:
     except:
         return False
 
-# === START ===
+
+# === ГЕНЕРАЦИЯ КАРТИНОК ===
+async def generate_image(prompt: str):
+    url = f"https://image.pollinations.ai/prompt/{prompt}"
+    return url
+
+
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
-    if not await is_subscribed(message.from_user.id):
-        await message.answer(
-            f"Салам, кунак! 👋\nПодпишись: {CHANNEL_USERNAME}\nПотом /start"
-        )
+    user_id = message.from_user.id
+    users[user_id] = message.from_user.first_name
+
+    if not await is_subscribed(user_id):
+        await message.answer(f"Подпишись на канал: {CHANNEL_USERNAME}")
         return
 
-    await message.answer("Валлахи братан 🔥 MirazGPT на связи!")
+    await message.answer("MirazGPT онлайн 🤖")
 
-# === MAIN CHAT ===
+
 @dp.message()
 async def handle_message(message: types.Message):
-    if not await is_subscribed(message.from_user.id):
-        await message.answer(f"Сначала подпишись: {CHANNEL_USERNAME}")
+    user_id = message.from_user.id
+    name = users.get(user_id, "брат")
+
+    if not await is_subscribed(user_id):
+        await message.answer("Сначала подпишись на канал")
         return
 
-    text = message.text
+    text = message.text.lower()
 
+    # === ЕСЛИ ХОТЯТ КАРТИНКУ ===
+    if any(x in text for x in ["нарисуй", "картинку", "generate", "image"]):
+        prompt = message.text
+
+        await message.answer("Рисую, брат... 🎨")
+
+        img_url = await generate_image(prompt)
+
+        await message.answer_photo(photo=img_url)
+        return
+
+    # === ОБЫЧНЫЙ ЧАТ ===
     try:
-        await message.answer("Думаю, братан... 🤔")
+        response = model.generate_content(message.text)
+        await message.answer(response.text)
+    except:
+        await message.answer("Ошибка, попробуй ещё раз")
 
-        response = model.generate_content(text)
 
-        if response.text:
-            await message.answer(response.text)
-        else:
-            await message.answer("Пустой ответ, попробуй ещё раз.")
-
-    except Exception as e:
-        await message.answer("Ошибка генерации, попробуй ещё раз.")
-
-# === RUN ===
 async def main():
-    print("🚀 MirazGPT запущен...")
+    print("Bot started...")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
