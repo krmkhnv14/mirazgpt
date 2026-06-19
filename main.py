@@ -17,80 +17,102 @@ dp = Dispatcher()
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-users = {}
+# === ПАМЯТЬ ===
+user_names = {}
+user_history = {}
 
+# === СТИЛЬ (СПОКОЙНЫЙ) ===
 SYSTEM_PROMPT = """
-Ты — MirazGPT, полезный Telegram ассистент.
-Отвечай кратко и понятно.
-Иногда можешь писать "Салам алейкум", "брат", "машаллах", но редко.
+Ты — полезный Telegram ассистент.
+
+Правила:
+- не используй звёздочки *
+- не делай форматирование
+- пиши просто и чисто
+- отвечай по делу
+
+Иногда:
+- "Салам алейкум" при приветствии
+- "ваалейкум ассалам" в ответ
+- иногда слово "брат"
+- иногда "машаллах" если уместно
 """
 
 model = genai.GenerativeModel(
-    model_name='gemini-2.5-flash',
+    model_name="gemini-2.5-flash",
     system_instruction=SYSTEM_PROMPT
 )
 
 # === ПРОВЕРКА ПОДПИСКИ ===
 async def is_subscribed(user_id: int) -> bool:
     try:
-        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in ["member", "administrator", "creator"]
+        m = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        return m.status in ["member", "administrator", "creator"]
     except:
         return False
 
 
-# === ГЕНЕРАЦИЯ КАРТИНОК ===
-async def generate_image(prompt: str):
-    url = f"https://image.pollinations.ai/prompt/{prompt}"
-    return url
+# === КАРТИНКИ (NanoBanana / Pollinations) ===
+def generate_image(prompt: str):
+    return f"https://image.pollinations.ai/prompt/{prompt}"
 
 
+# === START ===
 @dp.message(Command("start"))
-async def start_cmd(message: types.Message):
+async def start(message: types.Message):
     user_id = message.from_user.id
-    users[user_id] = message.from_user.first_name
+    user_names[user_id] = message.from_user.first_name
 
     if not await is_subscribed(user_id):
         await message.answer(f"Подпишись на канал: {CHANNEL_USERNAME}")
         return
 
-    await message.answer("MirazGPT онлайн 🤖")
+    await message.answer("Салам алейкум. Я на связи.")
 
 
+# === ОСНОВНОЙ ХЕНДЛЕР ===
 @dp.message()
-async def handle_message(message: types.Message):
+async def chat(message: types.Message):
     user_id = message.from_user.id
-    name = users.get(user_id, "брат")
+    name = user_names.get(user_id, "брат")
 
     if not await is_subscribed(user_id):
-        await message.answer("Сначала подпишись на канал")
+        await message.answer("Сначала подпишись на канал.")
         return
 
-    text = message.text.lower()
+    text = message.text
 
-    # === ЕСЛИ ХОТЯТ КАРТИНКУ ===
-    if any(x in text for x in ["нарисуй", "картинку", "generate", "image"]):
-        prompt = message.text
-
-        await message.answer("Рисую, брат... 🎨")
-
-        img_url = await generate_image(prompt)
-
-        await message.answer_photo(photo=img_url)
+    # === САЛАМ ===
+    if "салам" in text.lower():
+        await message.answer("ваалейкум ассалам")
         return
 
-    # === ОБЫЧНЫЙ ЧАТ ===
+    # === КАРТИНКИ ===
+    if any(x in text.lower() for x in ["нарисуй", "картинку", "image", "генерируй"]):
+        img = generate_image(text)
+        await message.answer_photo(img)
+        return
+
+    # === ИСТОРИЯ (простая память) ===
+    if user_id not in user_history:
+        user_history[user_id] = []
+
+    user_history[user_id].append(text)
+    user_history[user_id] = user_history[user_id][-5:]  # последние 5 сообщений
+
+    context = "\n".join(user_history[user_id])
+
     try:
-        response = model.generate_content(message.text)
-        await message.answer(response.text)
+        resp = model.generate_content(context)
+        await message.answer(resp.text)
     except:
-        await message.answer("Ошибка, попробуй ещё раз")
+        await message.answer("ошибка, попробуй ещё раз")
 
 
+# === RUN ===
 async def main():
-    print("Bot started...")
+    print("bot started")
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
