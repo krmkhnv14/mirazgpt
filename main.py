@@ -17,10 +17,11 @@ dp = Dispatcher()
 genai.configure(api_key=GEMINI_API_KEY)
 
 SYSTEM_PROMPT = """
-Ты MirazGPT — дагестанский ИИ. Отвечай по-русски, с юмором.
-Не используй звёздочки, markdown-разметку и лишние символы.
-Не упоминай религию.
-Отвечай естественно, без перегибов.
+Ты MirazGPT — умный кавказский ИИ помощник.
+Отвечай по-русски, просто и понятно.
+Без звёздочек, markdown и лишних символов.
+Без религиозных упоминаний.
+Давай полезные ответы, объяснения и туториалы.
 """
 
 model = genai.GenerativeModel(
@@ -28,6 +29,8 @@ model = genai.GenerativeModel(
     system_instruction=SYSTEM_PROMPT
 )
 
+
+# ================= CHECK SUB =================
 async def is_subscribed(user_id: int):
     try:
         member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
@@ -36,6 +39,36 @@ async def is_subscribed(user_id: int):
         return False
 
 
+# ================= CLEAN TEXT =================
+def clean(text: str) -> str:
+    if not text:
+        return ""
+
+    text = text.replace("*", "")
+    text = text.replace("_", "")
+    text = text.replace("`", "")
+    text = text.strip()
+
+    return text
+
+
+# ================= SAFE GEMINI CALL =================
+def ask_gemini(prompt: str):
+    for _ in range(2):  # retry 2 раза
+        try:
+            res = model.generate_content(prompt)
+
+            if res and res.text:
+                text = clean(res.text)
+                if len(text) > 0:
+                    return text
+        except:
+            continue
+
+    return "Не удалось получить ответ. Попробуй ещё раз."
+
+
+# ================= START =================
 @dp.message(Command("start"))
 async def start(message: types.Message):
     if not await is_subscribed(message.from_user.id):
@@ -43,34 +76,31 @@ async def start(message: types.Message):
         return
 
     await message.answer(
-        "Салам алейкум. Бот запущен.\n"
-        "Пиши вопросы — отвечу нормально и по делу."
+        "Салам. Я MirazGPT.\n"
+        "Могу объяснять, помогать с задачами и делать туториалы.\n"
+        "Пиши что нужно."
     )
 
 
+# ================= CHAT =================
 @dp.message()
 async def chat(message: types.Message):
     if not await is_subscribed(message.from_user.id):
         await message.answer("Сначала подпишись")
         return
 
-    try:
-        res = model.generate_content(message.text or "")
+    text = message.text or ""
 
-        text = res.text.strip() if res.text else ""
+    if not text.strip():
+        await message.answer("Напиши текст нормально")
+        return
 
-        if not text:
-            await message.answer("Не получилось ответить, попробуй ещё раз")
-            return
-
-        await message.answer(text)
-
-    except Exception:
-        await message.answer("Не получилось ответить, попробуй ещё раз")
+    answer = ask_gemini(text)
+    await message.answer(answer)
 
 
 async def main():
-    print("bot started")
+    print("MirazGPT started")
     await dp.start_polling(bot)
 
 
