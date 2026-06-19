@@ -1,15 +1,18 @@
 import asyncio
 import os
-import aiohttp
+import sqlite3
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from dotenv import load_dotenv
 import google.generativeai as genai
+from tavily import TavilyClient
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TAVILY_KEY = os.getenv("TAVILY_API_KEY")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 
 bot = Bot(token=BOT_TOKEN)
@@ -17,102 +20,120 @@ dp = Dispatcher()
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# === ПАМЯТЬ ===
-user_names = {}
-user_history = {}
-
-# === СТИЛЬ (СПОКОЙНЫЙ) ===
-SYSTEM_PROMPT = """
-Ты — полезный Telegram ассистент.
-
-Правила:
-- не используй звёздочки *
-- не делай форматирование
-- пиши просто и чисто
-- отвечай по делу
-
-Иногда:
-- "Салам алейкум" при приветствии
-- "ваалейкум ассалам" в ответ
-- иногда слово "брат"
-- иногда "машаллах" если уместно
-"""
+tavily = TavilyClient(api_key=TAVILY_KEY)
 
 model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
-    system_instruction=SYSTEM_PROMPT
+    model_name="gemini-1.5-flash",
+    system_instruction=(
+        "Ты умный ассистент. Отвечай кратко, без звёздочек и мусора. "
+        "Иногда используй 'брат' или 'кунак' но не спамь этим."
+    )
 )
 
-# === ПРОВЕРКА ПОДПИСКИ ===
-async def is_subscribed(user_id: int) -> bool:
+# ================= DATABASE =================
+conn = sqlite3.connect("memory.db")
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS messages (
+    user_id TEXT,
+    text TEXT
+)
+""")
+conn.commit()
+
+
+def save_message(user_id, text):
+    cursor.execute("INSERT INTO messages VALUES (?,?)", (user_id, text))
+    conn.commit()
+
+
+def get_history(user_id, limit=10):
+    cursor.execute(
+        "SELECT text FROM messages WHERE user_id=? ORDER BY rowid DESC LIMIT ?",
+        (user_id, limit)
+    )
+    rows = cursor.fetchall()
+    return [r[0] for r in reversed(rows)]
+
+
+# ================= INTERNET =================
+def search_web(query: str):
     try:
-        m = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return m.status in ["member", "administrator", "creator"]
+        res = tavily.search(query=query, max_results=3)
+        return "\n".join([r["content"] for r in res["results"]])
     except:
-        return False
+        return "Интернет недоступен"
 
 
-# === КАРТИНКИ (NanoBanana / Pollinations) ===
+# ================= IMAGE =================
 def generate_image(prompt: str):
+    prompt = prompt.replace(" ", "%20")
     return f"https://image.pollinations.ai/prompt/{prompt}"
 
 
-# === START ===
+# ================= CHECK =================
+async def is_subscribed(user_id: int):
+    try:
+        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return True
+
+
+# ================= START =================
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    user_id = message.from_user.id
-    user_names[user_id] = message.from_user.first_name
-
-    if not await is_subscribed(user_id):
-        await message.answer(f"Подпишись на канал: {CHANNEL_USERNAME}")
-        return
-
-    await message.answer("Салам алейкум. Я на связи.")
+    await message.answer("Салам алейкум")
 
 
-# === ОСНОВНОЙ ХЕНДЛЕР ===
+# ================= MAIN CHAT =================
 @dp.message()
 async def chat(message: types.Message):
-    user_id = message.from_user.id
-    name = user_names.get(user_id, "брат")
+    user_id = str(message.from_user.id)
+    text = message.text or ""
 
-    if not await is_subscribed(user_id):
-        await message.answer("Сначала подпишись на канал.")
-        return
-
-    text = message.text
-
-    # === САЛАМ ===
     if "салам" in text.lower():
-        await message.answer("ваалейкум ассалам")
+        await message.answer("Ваалейкум ассалам")
         return
 
-    # === КАРТИНКИ ===
-    if any(x in text.lower() for x in ["нарисуй", "картинку", "image", "генерируй"]):
+    # IMAGE
+    if any(x in text.lower() for x in ["нарисуй", "картинку"]):
+        await message.answer("Думаю над изображением...")
         img = generate_image(text)
         await message.answer_photo(img)
         return
 
-    # === ИСТОРИЯ (простая память) ===
-    if user_id not in user_history:
-        user_history[user_id] = []
+    # INTERNET SEARCH
+    if "найди" in text.lower() or "что такое" in text.lower():
+        await message.answer("Ищу в интернете...")
+        result = search_web(text)
+        await message.answer(result)
+        return
 
-    user_history[user_id].append(text)
-    user_history[user_id] = user_history[user_id][-5:]  # последние 5 сообщений
-
-    context = "\n".join(user_history[user_id])
+    # LOADING UX
+    loading = await message.answer("Думаю...")
 
     try:
-        resp = model.generate_content(context)
-        await message.answer(resp.text)
+        history = get_history(user_id)
+        context = "\n".join(history)
+
+        full_prompt = f"{context}\nПользователь: {text}"
+
+        response = model.generate_content(full_prompt)
+
+        save_message(user_id, text)
+
+        await loading.edit_text(response.text)
+
     except:
-        await message.answer("ошибка, попробуй ещё раз")
+        await loading.edit_text("Ошибка генерации")
 
 
-# === RUN ===
 async def main():
-    print("bot started")
+    print("MirazGPT 2.0 started")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
